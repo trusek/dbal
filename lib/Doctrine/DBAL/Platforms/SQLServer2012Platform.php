@@ -105,15 +105,26 @@ class SQLServer2012Platform extends SQLServer2008Platform
         // but can be in a newline
         $matches      = [];
         $matchesCount = preg_match_all('/[\\s]+order\\s+by\\s/im', $query, $matches, PREG_OFFSET_CAPTURE);
-        $orderByPos   = false;
+        $shouldAddOrderBy = true;
         if ($matchesCount > 0) {
-            $orderByPos = $matches[0][$matchesCount - 1][1];
+            // ORDER BY instance may be in a subquery after ORDER BY
+            // e.g. SELECT col1 FROM test ORDER BY (SELECT col2 from test ORDER BY col2)
+            // if in the searched query ORDER BY clause was found where
+            //  number of open parentheses after the occurrence of the clause is equal to
+            //  number of closed brackets after the occurrence of the clause,
+            // it means that ORDER BY is included in the query being checked
+            $orderByAlreadyExists = false;
+            $tempMatchesCount = $matchesCount;
+            while ($tempMatchesCount && ! $orderByAlreadyExists) {
+                $orderByPos = $matches[0][--$tempMatchesCount][1];
+                $openBracketsCount = substr_count($query, '(', $orderByPos) ;
+                $closedBracketsCount = substr_count($query, ')', $orderByPos) ;
+                $orderByAlreadyExists = ($openBracketsCount - $closedBracketsCount) === 0;
+            }
+            $shouldAddOrderBy = ! $orderByAlreadyExists;
         }
 
-        if (
-            $orderByPos === false
-            || substr_count($query, '(', $orderByPos) - substr_count($query, ')', $orderByPos)
-        ) {
+        if ($shouldAddOrderBy) {
             if (preg_match('/^SELECT\s+DISTINCT/im', $query)) {
                 // SQL Server won't let us order by a non-selected column in a DISTINCT query,
                 // so we have to do this madness. This says, order by the first column in the
